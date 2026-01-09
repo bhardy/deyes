@@ -17,8 +17,8 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
   // Dynamic import to avoid SSR issues - pdfjs-dist uses DOM APIs
   const pdfjsLib = await import("pdfjs-dist");
 
-  // Set up the worker
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  // Set up the worker from local public folder
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
   const arrayBuffer = await file.arrayBuffer();
   const data = new Uint8Array(arrayBuffer);
