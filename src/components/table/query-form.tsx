@@ -22,6 +22,25 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
   const [selectedRow, setSelectedRow] = useState<string>("");
   const [selectedColumn, setSelectedColumn] = useState<string>("");
 
+  // Debug logging
+  console.log("QueryForm received table:", {
+    headers: table.headers,
+    rowCount: table.rows.length,
+    rows: table.rows.slice(0, 3),
+  });
+
+  // Filter to only valid rows and headers
+  const validRows = table.rows.filter(
+    (row) => row.id && typeof row.id === "string" && row.id.trim() !== "" &&
+             row.label && typeof row.label === "string" && row.label.trim() !== ""
+  );
+
+  const validHeaders = table.headers.filter(
+    (header) => header && typeof header === "string" && header.trim() !== ""
+  );
+
+  console.log("Valid rows:", validRows.length, "Valid headers:", validHeaders.length);
+
   const handleSubmit = () => {
     if (selectedRow && selectedColumn) {
       onQuery(selectedRow, selectedColumn);
@@ -57,13 +76,11 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
                 <SelectValue placeholder="Select an item..." />
               </SelectTrigger>
               <SelectContent>
-                {table.rows
-                  .filter((row) => row.id && row.label && row.label.trim())
-                  .map((row) => (
-                    <SelectItem key={row.id} value={row.id}>
-                      {row.label}
-                    </SelectItem>
-                  ))}
+                {validRows.map((row) => (
+                  <SelectItem key={row.id} value={row.id}>
+                    {row.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -77,13 +94,11 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
                 <SelectValue placeholder="Select a value..." />
               </SelectTrigger>
               <SelectContent>
-                {table.headers
-                  .filter((header) => header && header.trim())
-                  .map((header, index) => (
-                    <SelectItem key={`${header}-${index}`} value={header}>
-                      {header}
-                    </SelectItem>
-                  ))}
+                {validHeaders.map((header, index) => (
+                  <SelectItem key={`${header}-${index}`} value={header}>
+                    {header}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
