@@ -17,13 +17,19 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
   // Dynamic import to avoid SSR issues - pdfjs-dist uses DOM APIs
   const pdfjsLib = await import("pdfjs-dist");
 
-  // Set up the worker from local public folder
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  // Disable worker to avoid cross-origin issues on Vercel
+  // Runs on main thread - fine for small/medium PDFs
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "";
 
   const arrayBuffer = await file.arrayBuffer();
   const data = new Uint8Array(arrayBuffer);
 
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pdf = await pdfjsLib.getDocument({
+    data,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  }).promise;
   const allItems: TextItem[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {

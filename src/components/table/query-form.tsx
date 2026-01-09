@@ -57,11 +57,13 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
                 <SelectValue placeholder="Select an item..." />
               </SelectTrigger>
               <SelectContent>
-                {table.rows.map((row) => (
-                  <SelectItem key={row.id} value={row.id}>
-                    {row.label}
-                  </SelectItem>
-                ))}
+                {table.rows
+                  .filter((row) => row.id && row.label && row.label.trim())
+                  .map((row) => (
+                    <SelectItem key={row.id} value={row.id}>
+                      {row.label}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -75,11 +77,13 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
                 <SelectValue placeholder="Select a value..." />
               </SelectTrigger>
               <SelectContent>
-                {table.headers.map((header) => (
-                  <SelectItem key={header} value={header}>
-                    {header}
-                  </SelectItem>
-                ))}
+                {table.headers
+                  .filter((header) => header && header.trim())
+                  .map((header, index) => (
+                    <SelectItem key={`${header}-${index}`} value={header}>
+                      {header}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
