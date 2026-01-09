@@ -42,16 +42,16 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
   }, [isStarted]);
 
   return (
-    <div className="flex h-dvh flex-col bg-background overflow-hidden">
+    <div className="fixed inset-0 flex flex-col bg-background overflow-hidden">
       <header className="flex justify-end p-4 shrink-0">
         <ThemeToggle />
       </header>
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex-1 overflow-hidden">
         <motion.div
           className="flex flex-col items-center w-full"
           initial={false}
           animate={{
-            paddingTop: isStarted ? "2rem" : "30dvh",
+            paddingTop: isStarted ? "2rem" : "25svh",
           }}
           transition={{
             type: "spring",
