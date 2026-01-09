@@ -1,13 +1,7 @@
 "use client";
 
-import * as pdfjsLib from "pdfjs-dist";
-import type { TextItem, ParsedTable, ParseResult } from "@/types/table";
+import type { TextItem, ParseResult } from "@/types/table";
 import { detectTables } from "./table-detector";
-
-// Set up the worker for client-side PDF.js
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-}
 
 interface PDFTextItem {
   str: string;
@@ -20,6 +14,12 @@ interface PDFTextItem {
  * Parses a PDF file on the client side
  */
 export async function parsePdfFile(file: File): Promise<ParseResult> {
+  // Dynamic import to avoid SSR issues - pdfjs-dist uses DOM APIs
+  const pdfjsLib = await import("pdfjs-dist");
+
+  // Set up the worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
   const arrayBuffer = await file.arrayBuffer();
   const data = new Uint8Array(arrayBuffer);
 
