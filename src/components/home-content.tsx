@@ -2,8 +2,8 @@
 
 import { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Upload } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
 import {
   LoadingScreen,
   QueryForm,
@@ -29,7 +29,6 @@ interface HomeContentProps {
 export function HomeContent({ initialStarted = false }: HomeContentProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isStarted, setIsStarted] = useState(initialStarted);
-  const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>("input");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
@@ -78,24 +77,8 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
     if (file) handleFile(file);
   };
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file) handleFile(file);
-    },
-    [handleFile]
-  );
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
   };
 
   const handleReset = () => {
@@ -145,70 +128,47 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
             exit={{ opacity: 0 }}
             className="w-full max-w-md px-4"
           >
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={handleFileInput}
+              className="hidden"
+            />
+
             <div className="relative">
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={handleFileInput}
-                className="hidden"
-              />
-
-              {/* Drop zone / button */}
-              <motion.div
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onClick={() => isStarted && fileInputRef.current?.click()}
-                className={`
-                  relative h-40 rounded-xl border-2 border-dashed transition-colors
-                  ${isDragging ? "border-primary bg-primary/10" : "border-muted-foreground/30"}
-                  ${isStarted ? "cursor-pointer hover:border-primary hover:bg-primary/5" : ""}
-                `}
+              {/* Upload button underneath */}
+              <Button
+                onClick={handleUploadClick}
+                className="w-full h-14 rounded-lg text-lg"
+                size="lg"
               >
-                {/* Start button overlay */}
-                <motion.button
-                  type="button"
-                  onClick={handleStart}
-                  className="absolute inset-0 rounded-xl bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90 flex items-center justify-center"
-                  initial={{ opacity: 1 }}
-                  animate={{ opacity: isStarted ? 0 : 1 }}
-                  transition={{ duration: 0.2 }}
-                  style={{ pointerEvents: isStarted ? "none" : "auto" }}
-                >
-                  Start
-                </motion.button>
+                Upload PDF
+              </Button>
 
-                {/* Drop zone content */}
-                <motion.div
-                  className="absolute inset-0 flex flex-col items-center justify-center gap-3"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: isStarted ? 1 : 0 }}
-                  transition={{ delay: 0.1 }}
-                >
-                  <Upload className="h-10 w-10 text-muted-foreground" />
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-foreground">
-                      Drop PDF here or click to browse
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Maximum file size: 10MB
-                    </p>
-                  </div>
-                </motion.div>
-              </motion.div>
-
-              {error && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mt-4 text-center text-sm text-destructive"
-                >
-                  {error}
-                </motion.p>
-              )}
+              {/* Start button on top - fades out */}
+              <motion.button
+                onClick={handleStart}
+                className="absolute inset-0 h-14 rounded-lg bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90"
+                initial={{ opacity: 1 }}
+                animate={{ opacity: isStarted ? 0 : 1 }}
+                transition={{ duration: 0.2 }}
+                style={{ pointerEvents: isStarted ? "none" : "auto" }}
+              >
+                Start
+              </motion.button>
             </div>
+
+            {error && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-4 text-center text-sm text-destructive"
+              >
+                {error}
+              </motion.p>
+            )}
           </motion.div>
         );
 
