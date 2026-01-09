@@ -29,21 +29,44 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
     rows: table.rows.slice(0, 3),
   });
 
-  // Filter to only valid rows and headers
-  const validRows = table.rows.filter(
-    (row) => row.id && typeof row.id === "string" && row.id.trim() !== "" &&
-             row.label && typeof row.label === "string" && row.label.trim() !== ""
-  );
+  // Filter and transform rows - truncate long labels
+  const validRows = table.rows
+    .filter(
+      (row) =>
+        row.id &&
+        typeof row.id === "string" &&
+        row.id.trim() !== "" &&
+        row.label &&
+        typeof row.label === "string" &&
+        row.label.trim() !== ""
+    )
+    .map((row) => ({
+      ...row,
+      displayLabel:
+        row.label.length > 50 ? row.label.slice(0, 50) + "..." : row.label,
+    }));
 
-  const validHeaders = table.headers.filter(
-    (header) => header && typeof header === "string" && header.trim() !== ""
-  );
+  // Filter headers and create safe values - use index as value to guarantee non-empty
+  const validHeaders = table.headers
+    .map((header, index) => ({
+      original: header,
+      value: `header-${index}`,
+      display: header && header.trim() ? header : `Column ${index + 1}`,
+    }))
+    .filter(
+      (h) =>
+        h.original && typeof h.original === "string" && h.original.trim() !== ""
+    );
 
   console.log("Valid rows:", validRows.length, "Valid headers:", validHeaders.length);
 
   const handleSubmit = () => {
     if (selectedRow && selectedColumn) {
-      onQuery(selectedRow, selectedColumn);
+      // Convert header value back to original header name
+      const header = validHeaders.find((h) => h.value === selectedColumn);
+      if (header) {
+        onQuery(selectedRow, header.original);
+      }
     }
   };
 
@@ -78,7 +101,7 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
               <SelectContent>
                 {validRows.map((row) => (
                   <SelectItem key={row.id} value={row.id}>
-                    {row.label}
+                    {row.displayLabel}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -94,9 +117,11 @@ export function QueryForm({ table, onQuery, onBack }: QueryFormProps) {
                 <SelectValue placeholder="Select a value..." />
               </SelectTrigger>
               <SelectContent>
-                {validHeaders.map((header, index) => (
-                  <SelectItem key={`${header}-${index}`} value={header}>
-                    {header}
+                {validHeaders.map((header) => (
+                  <SelectItem key={header.value} value={header.value}>
+                    {header.display.length > 30
+                      ? header.display.slice(0, 30) + "..."
+                      : header.display}
                   </SelectItem>
                 ))}
               </SelectContent>
