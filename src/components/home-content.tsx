@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { Upload } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
 import {
   LoadingScreen,
   QueryForm,
@@ -11,7 +11,8 @@ import {
   RowDetails,
   TableSelector,
 } from "@/components/table";
-import type { ParseResult, ParseResponse, TableRow } from "@/types/table";
+import { parsePdfFile } from "@/lib/pdf/client";
+import type { ParseResult, TableRow } from "@/types/table";
 
 type ViewState =
   | "input"
@@ -26,9 +27,9 @@ interface HomeContentProps {
 }
 
 export function HomeContent({ initialStarted = false }: HomeContentProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isStarted, setIsStarted] = useState(initialStarted);
-  const [url, setUrl] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>("input");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
@@ -39,55 +40,74 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
   const handleStart = () => {
     setIsStarted(true);
     window.history.pushState(null, "", "/start");
-    inputRef.current?.focus();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url.trim()) return;
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.type.includes("pdf")) {
+      setError("Please select a PDF file.");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError("File is too large. Maximum size is 10MB.");
+      return;
+    }
 
     setError(null);
     setView("loading");
 
     try {
-      const response = await fetch("/api/parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
-      });
+      const result = await parsePdfFile(file);
+      setParseResult(result);
 
-      const data: ParseResponse = await response.json();
-
-      if (!data.success) {
-        setError(data.error.message);
-        setView("input");
-        return;
-      }
-
-      setParseResult(data.data);
-
-      // If multiple tables, show selector; otherwise go to query
-      if (data.data.tables.length > 1) {
+      if (result.tables.length > 1) {
         setSelectedTableIndex(0);
         setView("select-table");
       } else {
         setSelectedTableIndex(0);
         setView("query");
       }
-    } catch {
-      setError("Failed to connect. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to parse PDF.");
       setView("input");
     }
+  }, []);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleFile(file);
+    },
+    [handleFile]
+  );
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
   };
 
   const handleReset = () => {
-    setUrl("");
     setError(null);
     setView("input");
     setParseResult(null);
     setSelectedTableIndex(0);
     setSelectedRow(null);
     setSelectedColumn(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleTableSelect = (index: number) => {
@@ -125,23 +145,33 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
             exit={{ opacity: 0 }}
             className="w-full max-w-md px-4"
           >
-            <form onSubmit={handleSubmit}>
-              <div className="relative">
-                {/* Input underneath */}
-                <input
-                  ref={inputRef}
-                  type="url"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="Paste PDF URL..."
-                  className="w-full h-14 rounded-lg border-2 border-primary bg-background px-6 text-lg placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+            <div className="relative">
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handleFileInput}
+                className="hidden"
+              />
 
-                {/* Button on top */}
+              {/* Drop zone / button */}
+              <motion.div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onClick={() => isStarted && fileInputRef.current?.click()}
+                className={`
+                  relative h-40 rounded-xl border-2 border-dashed transition-colors
+                  ${isDragging ? "border-primary bg-primary/10" : "border-muted-foreground/30"}
+                  ${isStarted ? "cursor-pointer hover:border-primary hover:bg-primary/5" : ""}
+                `}
+              >
+                {/* Start button overlay */}
                 <motion.button
                   type="button"
                   onClick={handleStart}
-                  className="absolute inset-0 h-14 rounded-lg bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90"
+                  className="absolute inset-0 rounded-xl bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90 flex items-center justify-center"
                   initial={{ opacity: 1 }}
                   animate={{ opacity: isStarted ? 0 : 1 }}
                   transition={{ duration: 0.2 }}
@@ -149,25 +179,25 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
                 >
                   Start
                 </motion.button>
-              </div>
 
-              {isStarted && (
+                {/* Drop zone content */}
                 <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="mt-4"
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-3"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: isStarted ? 1 : 0 }}
+                  transition={{ delay: 0.1 }}
                 >
-                  <Button
-                    type="submit"
-                    disabled={!url.trim()}
-                    className="w-full"
-                    size="lg"
-                  >
-                    Parse PDF
-                  </Button>
+                  <Upload className="h-10 w-10 text-muted-foreground" />
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-foreground">
+                      Drop PDF here or click to browse
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Maximum file size: 10MB
+                    </p>
+                  </div>
                 </motion.div>
-              )}
+              </motion.div>
 
               {error && (
                 <motion.p
@@ -178,7 +208,7 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
                   {error}
                 </motion.p>
               )}
-            </form>
+            </div>
           </motion.div>
         );
 
