@@ -22,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased h-dvh overflow-hidden">
+      <body className="antialiased">
         {children}
       </body>
     </html>

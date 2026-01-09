@@ -172,10 +172,20 @@
   * {
     @apply border-border;
   }
-  html, body {
+  html {
+    height: 100%;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+  }
+  body {
     @apply bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
-    height: 100dvh;
+    height: 100%;
     overflow: hidden;
+    position: fixed;
+    width: 100%;
+    overscroll-behavior: none;
+    touch-action: none;
   }
 }
