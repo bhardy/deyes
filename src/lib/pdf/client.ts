@@ -14,25 +14,30 @@ interface PDFTextItem {
  * Parses a PDF file on the client side
  */
 export async function parsePdfFile(file: File): Promise<ParseResult> {
-  // Dynamic import to avoid SSR issues - pdfjs-dist uses DOM APIs
+  console.log("Starting PDF parse for:", file.name);
+
+  // Dynamic import to avoid SSR issues
+  console.log("Importing pdfjs-dist...");
   const pdfjsLib = await import("pdfjs-dist");
+  console.log("pdfjs-dist imported, version:", pdfjsLib.version);
 
-  // Disable worker to avoid cross-origin issues on Vercel
-  // Runs on main thread - fine for small/medium PDFs
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+  // Use local worker file
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  console.log("Worker configured");
 
+  console.log("Reading file...");
   const arrayBuffer = await file.arrayBuffer();
   const data = new Uint8Array(arrayBuffer);
+  console.log("File read, size:", data.length);
 
-  const pdf = await pdfjsLib.getDocument({
-    data,
-    useWorkerFetch: false,
-    isEvalSupported: false,
-    useSystemFonts: true,
-  }).promise;
+  console.log("Loading PDF document...");
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  console.log("PDF loaded, pages:", pdf.numPages);
+
   const allItems: TextItem[] = [];
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    console.log("Processing page", pageNum);
     const page = await pdf.getPage(pageNum);
     const textContent = await page.getTextContent();
     const viewport = page.getViewport({ scale: 1.0 });
