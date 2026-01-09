@@ -1,0 +1,223 @@
+import type { TextItem, ParsedTable, TableRow } from "@/types/table";
+
+// Tolerance for grouping items into rows (pixels)
+const Y_TOLERANCE = 8;
+// Tolerance for detecting column boundaries (pixels)
+const X_TOLERANCE = 15;
+// Minimum gap between tables (pixels)
+const TABLE_GAP_THRESHOLD = 50;
+// Minimum rows to be considered a table
+const MIN_TABLE_ROWS = 2;
+
+/**
+ * Groups text items into rows based on Y position
+ */
+function groupIntoRows(items: TextItem[]): TextItem[][] {
+  if (items.length === 0) return [];
+
+  // Sort by Y position first
+  const sorted = [...items].sort((a, b) => a.y - b.y);
+
+  const rows: TextItem[][] = [];
+  let currentRow: TextItem[] = [sorted[0]];
+  let currentY = sorted[0].y;
+
+  for (let i = 1; i < sorted.length; i++) {
+    const item = sorted[i];
+
+    if (Math.abs(item.y - currentY) <= Y_TOLERANCE) {
+      // Same row
+      currentRow.push(item);
+    } else {
+      // New row - save current and start new
+      rows.push(currentRow.sort((a, b) => a.x - b.x));
+      currentRow = [item];
+      currentY = item.y;
+    }
+  }
+
+  // Don't forget the last row
+  if (currentRow.length > 0) {
+    rows.push(currentRow.sort((a, b) => a.x - b.x));
+  }
+
+  return rows;
+}
+
+/**
+ * Detects column boundaries from rows
+ * Returns array of X positions that define column starts
+ */
+function detectColumnBoundaries(rows: TextItem[][]): number[] {
+  // Collect all X positions
+  const xPositions: number[] = [];
+
+  for (const row of rows) {
+    for (const item of row) {
+      xPositions.push(item.x);
+    }
+  }
+
+  if (xPositions.length === 0) return [];
+
+  // Sort and cluster X positions
+  xPositions.sort((a, b) => a - b);
+
+  const clusters: number[] = [];
+  let clusterStart = xPositions[0];
+  let clusterSum = xPositions[0];
+  let clusterCount = 1;
+
+  for (let i = 1; i < xPositions.length; i++) {
+    if (xPositions[i] - clusterStart <= X_TOLERANCE) {
+      // Same cluster
+      clusterSum += xPositions[i];
+      clusterCount++;
+    } else {
+      // New cluster - save average of current
+      clusters.push(Math.round(clusterSum / clusterCount));
+      clusterStart = xPositions[i];
+      clusterSum = xPositions[i];
+      clusterCount = 1;
+    }
+  }
+
+  // Don't forget the last cluster
+  clusters.push(Math.round(clusterSum / clusterCount));
+
+  return clusters;
+}
+
+/**
+ * Maps a row's items to columns
+ */
+function mapRowToColumns(row: TextItem[], columnBoundaries: number[]): string[] {
+  const result: string[] = new Array(columnBoundaries.length).fill("");
+
+  for (const item of row) {
+    // Find the closest column for this item
+    let closestCol = 0;
+    let closestDist = Math.abs(item.x - columnBoundaries[0]);
+
+    for (let i = 1; i < columnBoundaries.length; i++) {
+      const dist = Math.abs(item.x - columnBoundaries[i]);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestCol = i;
+      }
+    }
+
+    // Append to existing content (handles multi-part cells)
+    if (result[closestCol]) {
+      result[closestCol] += " " + item.str;
+    } else {
+      result[closestCol] = item.str;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Splits rows into separate tables based on Y gaps
+ */
+function splitIntoTables(rows: TextItem[][]): TextItem[][][] {
+  if (rows.length === 0) return [];
+
+  const tables: TextItem[][][] = [];
+  let currentTable: TextItem[][] = [rows[0]];
+
+  for (let i = 1; i < rows.length; i++) {
+    const prevRowY = Math.min(...rows[i - 1].map((item) => item.y));
+    const currRowY = Math.min(...rows[i].map((item) => item.y));
+    const gap = currRowY - prevRowY;
+
+    if (gap > TABLE_GAP_THRESHOLD) {
+      // Large gap - start new table
+      if (currentTable.length >= MIN_TABLE_ROWS) {
+        tables.push(currentTable);
+      }
+      currentTable = [rows[i]];
+    } else {
+      currentTable.push(rows[i]);
+    }
+  }
+
+  // Don't forget the last table
+  if (currentTable.length >= MIN_TABLE_ROWS) {
+    tables.push(currentTable);
+  }
+
+  return tables;
+}
+
+/**
+ * Converts rows to structured table data
+ */
+function rowsToTable(rows: TextItem[][], tableIndex: number): ParsedTable | null {
+  if (rows.length < MIN_TABLE_ROWS) return null;
+
+  // Detect column boundaries
+  const columnBoundaries = detectColumnBoundaries(rows);
+
+  if (columnBoundaries.length < 2) return null;
+
+  // Map all rows to columns
+  const mappedRows = rows.map((row) => mapRowToColumns(row, columnBoundaries));
+
+  // First row is headers
+  const headers = mappedRows[0];
+
+  // Remaining rows are data
+  const tableRows: TableRow[] = [];
+
+  for (let i = 1; i < mappedRows.length; i++) {
+    const rowData = mappedRows[i];
+    const label = rowData[0] || `Row ${i}`;
+
+    const values: Record<string, string> = {};
+    for (let j = 1; j < headers.length; j++) {
+      const header = headers[j] || `Column ${j}`;
+      values[header] = rowData[j] || "";
+    }
+
+    tableRows.push({
+      id: `table-${tableIndex}-row-${i}`,
+      label,
+      values,
+    });
+  }
+
+  return {
+    id: `table-${tableIndex}`,
+    headers: headers.slice(1), // Exclude the label column from headers
+    rows: tableRows,
+  };
+}
+
+/**
+ * Main function: Detects tables from extracted text items
+ */
+export function detectTables(items: TextItem[]): ParsedTable[] {
+  // Group into rows
+  const rows = groupIntoRows(items);
+
+  if (rows.length < MIN_TABLE_ROWS) {
+    return [];
+  }
+
+  // Split into separate tables if there are large gaps
+  const tableGroups = splitIntoTables(rows);
+
+  // Convert each group to structured table data
+  const tables: ParsedTable[] = [];
+
+  for (let i = 0; i < tableGroups.length; i++) {
+    const table = rowsToTable(tableGroups[i], i);
+    if (table && table.rows.length > 0) {
+      tables.push(table);
+    }
+  }
+
+  return tables;
+}
