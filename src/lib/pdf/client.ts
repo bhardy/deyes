@@ -56,7 +56,23 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
     }
   }
 
+  console.log("Extracted text items:", allItems.length);
+  console.log("Sample items:", allItems.slice(0, 10));
+
   const tables = detectTables(allItems);
+
+  console.log("Detected tables:", tables.length);
+  tables.forEach((table, i) => {
+    console.log(`Table ${i}:`, {
+      headers: table.headers,
+      rowCount: table.rows.length,
+      sampleRows: table.rows.slice(0, 3).map((r) => ({
+        id: r.id,
+        label: r.label,
+        values: r.values,
+      })),
+    });
+  });
 
   if (tables.length === 0) {
     throw new Error("No tables found in this PDF.");
