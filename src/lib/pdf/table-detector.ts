@@ -1,18 +1,21 @@
 import type { TextItem, ParsedTable, TableRow } from "@/types/table";
 
-// Tolerance for grouping items into rows (pixels) - reduced for tighter grouping
-const Y_TOLERANCE = 3;
+// Tolerance for grouping items into rows (pixels) - very tight for nutritional PDFs
+const Y_TOLERANCE = 2;
 // Tolerance for detecting column boundaries (pixels)
-const X_TOLERANCE = 10;
+const X_TOLERANCE = 8;
 // Minimum gap between tables (pixels)
-const TABLE_GAP_THRESHOLD = 30;
+const TABLE_GAP_THRESHOLD = 25;
 // Minimum rows to be considered a table
 const MIN_TABLE_ROWS = 2;
 // Minimum columns for a valid table
-const MIN_COLUMNS = 3;
+const MIN_COLUMNS = 2;
+// Maximum reasonable column width (pixels) - helps detect when items should be separate columns
+const MAX_COL_WIDTH = 100;
 
 /**
  * Groups text items into rows based on Y position
+ * Uses average Y of row for comparison to handle slight variations
  */
 function groupIntoRows(items: TextItem[]): TextItem[][] {
   if (items.length === 0) return [];
@@ -22,12 +25,16 @@ function groupIntoRows(items: TextItem[]): TextItem[][] {
 
   const rows: TextItem[][] = [];
   let currentRow: TextItem[] = [sorted[0]];
-  let currentY = sorted[0].y;
+
+  // Calculate average Y of current row for comparison
+  const getRowAvgY = (row: TextItem[]) =>
+    row.reduce((sum, item) => sum + item.y, 0) / row.length;
 
   for (let i = 1; i < sorted.length; i++) {
     const item = sorted[i];
+    const currentAvgY = getRowAvgY(currentRow);
 
-    if (Math.abs(item.y - currentY) <= Y_TOLERANCE) {
+    if (Math.abs(item.y - currentAvgY) <= Y_TOLERANCE) {
       // Same row
       currentRow.push(item);
     } else {
@@ -36,7 +43,6 @@ function groupIntoRows(items: TextItem[]): TextItem[][] {
         rows.push(currentRow.sort((a, b) => a.x - b.x));
       }
       currentRow = [item];
-      currentY = item.y;
     }
   }
 
@@ -101,39 +107,48 @@ function detectColumnBoundaries(rows: TextItem[][], typicalCols: number): number
 }
 
 /**
- * Fallback column detection using clustering
+ * Fallback column detection using gap analysis
+ * Looks for significant gaps between items to determine column boundaries
  */
 function detectColumnBoundariesFallback(rows: TextItem[][]): number[] {
-  const xPositions: number[] = [];
+  // Collect all unique X positions with their frequencies
+  const xPositionCounts: Map<number, number> = new Map();
 
   for (const row of rows) {
     for (const item of row) {
-      xPositions.push(item.x);
+      // Round to nearest 5 pixels for grouping
+      const roundedX = Math.round(item.x / 5) * 5;
+      xPositionCounts.set(roundedX, (xPositionCounts.get(roundedX) || 0) + 1);
     }
   }
 
-  if (xPositions.length === 0) return [];
+  if (xPositionCounts.size === 0) return [];
 
-  xPositions.sort((a, b) => a - b);
+  // Sort positions and find clusters
+  const positions = Array.from(xPositionCounts.keys()).sort((a, b) => a - b);
 
   const clusters: number[] = [];
-  let clusterStart = xPositions[0];
-  let clusterSum = xPositions[0];
-  let clusterCount = 1;
+  let clusterPositions: number[] = [positions[0]];
 
-  for (let i = 1; i < xPositions.length; i++) {
-    if (xPositions[i] - clusterStart <= X_TOLERANCE) {
-      clusterSum += xPositions[i];
-      clusterCount++;
+  for (let i = 1; i < positions.length; i++) {
+    const gap = positions[i] - positions[i - 1];
+
+    if (gap <= X_TOLERANCE * 2) {
+      // Same cluster
+      clusterPositions.push(positions[i]);
     } else {
-      clusters.push(Math.round(clusterSum / clusterCount));
-      clusterStart = xPositions[i];
-      clusterSum = xPositions[i];
-      clusterCount = 1;
+      // New cluster - save previous
+      const avgPos = clusterPositions.reduce((a, b) => a + b, 0) / clusterPositions.length;
+      clusters.push(Math.round(avgPos));
+      clusterPositions = [positions[i]];
     }
   }
 
-  clusters.push(Math.round(clusterSum / clusterCount));
+  // Don't forget last cluster
+  if (clusterPositions.length > 0) {
+    const avgPos = clusterPositions.reduce((a, b) => a + b, 0) / clusterPositions.length;
+    clusters.push(Math.round(avgPos));
+  }
 
   return clusters;
 }
@@ -199,6 +214,37 @@ function splitIntoTables(rows: TextItem[][]): TextItem[][][] {
 }
 
 /**
+ * Finds the best header row index based on content analysis
+ */
+function findHeaderRowIndex(mappedRows: string[][]): number {
+  // Look for first row where most cells contain text (not just numbers)
+  for (let i = 0; i < Math.min(5, mappedRows.length); i++) {
+    const row = mappedRows[i];
+    let textCells = 0;
+    let totalCells = 0;
+
+    for (let j = 1; j < row.length; j++) {
+      const cell = row[j]?.trim();
+      if (cell) {
+        totalCells++;
+        // Check if cell is primarily text (not a number)
+        const cleaned = cell.replace(/[,\s%$]/g, "");
+        if (isNaN(Number(cleaned)) && !/^\d+\.?\d*$/.test(cleaned)) {
+          textCells++;
+        }
+      }
+    }
+
+    // If more than half the cells are text, this is likely a header row
+    if (totalCells > 0 && textCells / totalCells > 0.5) {
+      return i;
+    }
+  }
+
+  return 0;
+}
+
+/**
  * Converts rows to structured table data
  */
 function rowsToTable(rows: TextItem[][], tableIndex: number): ParsedTable | null {
@@ -214,54 +260,78 @@ function rowsToTable(rows: TextItem[][], tableIndex: number): ParsedTable | null
   // Detect column boundaries
   const columnBoundaries = detectColumnBoundaries(rows, typicalCols);
 
-  console.log(`Column boundaries:`, columnBoundaries);
+  console.log(`Column boundaries (${columnBoundaries.length}):`, columnBoundaries.slice(0, 10));
 
   if (columnBoundaries.length < MIN_COLUMNS) return null;
 
   // Map all rows to columns
   const mappedRows = rows.map((row) => mapRowToColumns(row, columnBoundaries));
 
-  // Find header row - look for row with text-like content (not just numbers)
-  let headerRowIndex = 0;
-  for (let i = 0; i < Math.min(5, mappedRows.length); i++) {
-    const row = mappedRows[i];
-    const hasTextHeaders = row.slice(1).some(cell =>
-      cell && isNaN(Number(cell.replace(/[^\d.-]/g, '')))
-    );
-    if (hasTextHeaders) {
-      headerRowIndex = i;
-      break;
-    }
-  }
+  // Log mapped rows for debugging
+  console.log("Sample mapped rows:", mappedRows.slice(0, 3).map((r, i) => ({
+    idx: i,
+    cells: r.slice(0, 5).map(c => c?.slice(0, 20))
+  })));
+
+  // Find header row
+  const headerRowIndex = findHeaderRowIndex(mappedRows);
+  console.log(`Using header row index: ${headerRowIndex}`);
 
   const headers = mappedRows[headerRowIndex];
   const tableRows: TableRow[] = [];
 
+  // Process data rows
   for (let i = headerRowIndex + 1; i < mappedRows.length; i++) {
     const rowData = mappedRows[i];
-    const label = rowData[0]?.trim() || `Row ${i}`;
+    const label = rowData[0]?.trim();
 
-    // Skip rows with empty labels
-    if (!label || label === `Row ${i}`) continue;
+    // Skip rows with empty or very short labels (likely continuation or noise)
+    if (!label || label.length < 2) continue;
 
-    const values: Record<string, string> = {};
-    for (let j = 1; j < headers.length; j++) {
-      const header = headers[j]?.trim() || `Column ${j}`;
-      values[header] = rowData[j]?.trim() || "";
+    // Skip rows that look like sub-headers or section headers
+    const firstDataCell = rowData[1]?.trim();
+    if (firstDataCell && isNaN(Number(firstDataCell.replace(/[,\s%$]/g, "")))) {
+      // If first data cell is also text, this might be a sub-header - skip
+      const numericCells = rowData.slice(1).filter(cell => {
+        const cleaned = cell?.trim().replace(/[,\s%$]/g, "");
+        return cleaned && !isNaN(Number(cleaned));
+      }).length;
+
+      if (numericCells < rowData.length / 3) {
+        continue; // Skip non-data rows
+      }
     }
 
-    tableRows.push({
-      id: `table-${tableIndex}-row-${i}`,
-      label,
-      values,
-    });
+    const values: Record<string, string> = {};
+    for (let j = 1; j < Math.min(headers.length, rowData.length); j++) {
+      const header = headers[j]?.trim() || `Column ${j}`;
+      if (header && header !== `Column ${j}`) {
+        values[header] = rowData[j]?.trim() || "";
+      }
+    }
+
+    // Only add row if it has values
+    if (Object.keys(values).length > 0) {
+      tableRows.push({
+        id: `table-${tableIndex}-row-${i}`,
+        label,
+        values,
+      });
+    }
   }
 
   if (tableRows.length === 0) return null;
 
+  // Filter out empty headers
+  const validHeaders = headers.slice(1)
+    .map(h => h?.trim() || "")
+    .filter(h => h && h.length > 0);
+
+  console.log(`Table ${tableIndex}: ${validHeaders.length} headers, ${tableRows.length} rows`);
+
   return {
     id: `table-${tableIndex}`,
-    headers: headers.slice(1).map(h => h?.trim() || "").filter(h => h),
+    headers: validHeaders,
     rows: tableRows,
   };
 }
