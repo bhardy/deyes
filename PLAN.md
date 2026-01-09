@@ -22,33 +22,121 @@ An app that makes health information tables (and other data tables) easy to read
 
 ## Technical Architecture
 
-### PDF Parsing Service
+### PDF Parsing: pdfjs-dist (No AI)
 
-**Recommended: LlamaParse (via LlamaCloud)**
-- ✅ Free tier: 1,000 pages/day (more than enough for low traffic)
-- ✅ Excellent table extraction
-- ✅ Returns structured markdown tables
-- ✅ Works with Vercel serverless functions
-- ✅ Simple API integration
+Uses Mozilla's PDF.js library to extract text with positional data, then reconstructs table structure algorithmically.
 
-**Alternative Options:**
-- Unstructured.io (free tier available, good table support)
-- pdf-parse + manual table extraction (free, but less reliable)
+**Why this approach:**
+- ✅ Completely free, no API keys needed
+- ✅ Runs entirely on Vercel serverless functions
+- ✅ No external service dependencies
+- ✅ Fast processing (no network calls to AI services)
+- ✅ Works well for structured tables like nutritional info
+
+**Dependencies:**
+- `pdfjs-dist` - PDF text extraction with positions
+- `node-fetch` or native fetch - Fetch PDFs from URLs
 
 ### Data Flow
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│  API Route  │────▶│ LlamaParse  │
-│  (URL input)│     │ /api/parse  │     │   Service   │
+│   Client    │────▶│  API Route  │────▶│  pdfjs-dist │
+│  (URL input)│     │ /api/parse  │     │  (extract)  │
 └─────────────┘     └─────────────┘     └─────────────┘
                            │
                            ▼
                     ┌─────────────┐
-                    │   Return    │
-                    │ Table Data  │
-                    │   (JSON)    │
+                    │  Position   │
+                    │  Analysis   │
+                    │ (detect rows│
+                    │ & columns)  │
                     └─────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │   Return    │
+                    │ Table JSON  │
+                    └─────────────┘
+```
+
+### Table Detection Algorithm
+
+The core parsing logic uses text positions to reconstruct table structure:
+
+```typescript
+// 1. Extract all text items with positions from PDF
+interface TextItem {
+  str: string;      // The text content
+  x: number;        // X position (left edge)
+  y: number;        // Y position (from top)
+  width: number;    // Text width
+  height: number;   // Text height
+}
+
+// 2. Group items by Y position (rows)
+// Items within Y_TOLERANCE pixels are considered same row
+const Y_TOLERANCE = 5;
+function groupIntoRows(items: TextItem[]): TextItem[][] {
+  // Sort by Y, then group items with similar Y values
+}
+
+// 3. Sort each row by X position (left to right)
+rows.forEach(row => row.sort((a, b) => a.x - b.x));
+
+// 4. Detect column boundaries from consistent X positions
+// Use header row or most common X positions as column anchors
+function detectColumns(rows: TextItem[][]): number[] {
+  // Find recurring X positions across rows
+  // These become column boundaries
+}
+
+// 5. Map each row's items to detected columns
+function mapRowToColumns(row: TextItem[], columns: number[]): string[] {
+  // Assign each text item to nearest column
+}
+```
+
+### Handling Edge Cases
+
+| Challenge | Solution |
+|-----------|----------|
+| Multi-line cells | Merge items with Y values within small threshold |
+| Column alignment | Use header row X positions as reference anchors |
+| Multiple tables | Detect large Y gaps (>50px) as table boundaries |
+| Spanning cells | Assign to leftmost overlapping column |
+| No clear headers | Use first row, or let user identify header row |
+| Rotated text | Filter out items with unusual transforms |
+
+### Position-Based Parsing Details
+
+```typescript
+// Example: How raw PDF text becomes structured data
+
+// Raw extracted items:
+[
+  { str: "Item", x: 20, y: 100 },
+  { str: "Calories", x: 150, y: 100 },
+  { str: "Fat", x: 250, y: 100 },
+  { str: "Cheese Pizza", x: 20, y: 130 },
+  { str: "290", x: 150, y: 130 },
+  { str: "12g", x: 250, y: 130 },
+]
+
+// After grouping by Y (rows):
+[
+  [{ str: "Item", x: 20 }, { str: "Calories", x: 150 }, { str: "Fat", x: 250 }],
+  [{ str: "Cheese Pizza", x: 20 }, { str: "290", x: 150 }, { str: "12g", x: 250 }],
+]
+
+// After column detection (X positions: 20, 150, 250):
+// Final structured output:
+{
+  headers: ["Item", "Calories", "Fat"],
+  rows: [
+    { label: "Cheese Pizza", values: { "Calories": "290", "Fat": "12g" } }
+  ]
+}
 ```
 
 ### Table Data Structure
@@ -267,8 +355,11 @@ src/
 │       └── spinner.tsx           # Add loading spinner
 ├── lib/
 │   ├── utils.ts
-│   ├── parse-pdf.ts              # LlamaParse integration
-│   └── table-utils.ts            # Table parsing helpers
+│   ├── pdf/
+│   │   ├── extract.ts            # pdfjs-dist text extraction
+│   │   ├── table-detector.ts     # Position-based table detection
+│   │   └── index.ts              # Main parse function
+│   └── table-utils.ts            # Table data helpers
 └── types/
     └── table.ts                  # Type definitions
 ```
@@ -280,20 +371,24 @@ src/
 ### Phase 1: Core PDF URL Parsing (MVP)
 
 **Tasks:**
-1. Set up LlamaParse API integration
-2. Create `/api/parse` endpoint
-3. Update home page for URL input with submit
-4. Create loading screen component
-5. Create query form with selects
-6. Create result display component
-7. Create row details view
-8. Add shadcn Select component
-9. Add state management for parsed table data
+1. Install and configure pdfjs-dist for Node.js
+2. Implement text extraction with positions (`lib/pdf/extract.ts`)
+3. Implement table detection algorithm (`lib/pdf/table-detector.ts`)
+4. Create `/api/parse` endpoint
+5. Update home page for URL input with submit
+6. Create loading screen component
+7. Create query form with selects
+8. Create result display component
+9. Create row details view
+10. Add shadcn Select component
+11. Add state management for parsed table data
 
-**Environment Variables:**
-```env
-LLAMA_CLOUD_API_KEY=your_key_here
+**Dependencies to install:**
+```bash
+npm install pdfjs-dist
 ```
+
+**No environment variables needed for PDF parsing!**
 
 ### Phase 2: PDF Upload
 
@@ -313,8 +408,8 @@ LLAMA_CLOUD_API_KEY=your_key_here
 
 **Tasks:**
 1. Add image upload support
-2. Integrate OCR service (e.g., Google Vision, Tesseract)
-3. Table detection from images
+2. Integrate OCR (Tesseract.js - runs in browser/Node, no API needed)
+3. Table detection from images using position-based algorithm
 
 ---
 
@@ -347,9 +442,10 @@ interface AppState {
 |------------|--------------|
 | Invalid URL | "Please enter a valid PDF URL" |
 | Fetch failed | "Couldn't access this PDF. Make sure the URL is public." |
+| Not a PDF | "This doesn't appear to be a PDF file." |
 | Parse failed | "Couldn't read tables from this PDF. Try a different file." |
 | No tables found | "No tables found in this PDF." |
-| Rate limited | "Too many requests. Please try again later." |
+| PDF too large | "This PDF is too large. Maximum size is 10MB." |
 
 ---
 
@@ -397,11 +493,13 @@ interface AppState {
 
 ## Next Steps
 
-1. [ ] Set up LlamaParse account and get API key
+1. [ ] Install pdfjs-dist dependency
 2. [ ] Create type definitions (`src/types/table.ts`)
-3. [ ] Implement API route (`/api/parse`)
-4. [ ] Add shadcn Select component
-5. [ ] Build out UI screens progressively
-6. [ ] Test with example PDF
-7. [ ] Add error handling
-8. [ ] Polish animations with Motion
+3. [ ] Implement PDF text extraction (`src/lib/pdf/extract.ts`)
+4. [ ] Implement table detection algorithm (`src/lib/pdf/table-detector.ts`)
+5. [ ] Create API route (`/api/parse`)
+6. [ ] Add shadcn Select component
+7. [ ] Build out UI screens progressively
+8. [ ] Test with example PDF
+9. [ ] Add error handling
+10. [ ] Polish animations with Motion
