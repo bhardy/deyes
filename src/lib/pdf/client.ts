@@ -1,7 +1,7 @@
 "use client";
 
-import type { TextItem, ParseResult } from "@/types/table";
-import { detectTables } from "./table-detector";
+import type { TextItem, ParseResult, RawRow } from "@/types/table";
+import { detectTables, extractRawRows } from "./table-detector";
 
 interface PDFTextItem {
   str: string;
@@ -64,6 +64,15 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
   console.log("Extracted text items:", allItems.length);
   console.log("Sample items:", allItems.slice(0, 10));
 
+  // Extract raw rows for calibration mode
+  const rawRows = extractRawRows(allItems);
+  console.log("Extracted raw rows:", rawRows.length);
+  console.log("Sample raw rows:", rawRows.slice(0, 5).map(r => ({
+    cells: r.cells.slice(0, 5),
+    y: r.y
+  })));
+
+  // Attempt automatic table detection
   const tables = detectTables(allItems);
 
   console.log("Detected tables:", tables.length);
@@ -79,13 +88,11 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
     });
   });
 
-  if (tables.length === 0) {
-    throw new Error("No tables found in this PDF.");
-  }
-
+  // Return with raw rows for calibration (even if no tables detected)
   return {
     sourceUrl: file.name,
     tables,
+    rawRows,
     parsedAt: new Date().toISOString(),
   };
 }

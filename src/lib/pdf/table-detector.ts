@@ -1,4 +1,4 @@
-import type { TextItem, ParsedTable, TableRow } from "@/types/table";
+import type { TextItem, ParsedTable, TableRow, RawRow, CalibrationSettings } from "@/types/table";
 
 // Tolerance for grouping items into rows (pixels) - very tight for nutritional PDFs
 const Y_TOLERANCE = 2;
@@ -371,4 +371,79 @@ export function detectTables(items: TextItem[]): ParsedTable[] {
   }
 
   return tables;
+}
+
+/**
+ * Extract raw rows from text items for calibration UI
+ */
+export function extractRawRows(items: TextItem[]): RawRow[] {
+  const rows = groupIntoRows(items);
+
+  return rows.map(row => {
+    // Sort by X and join cells
+    const sortedItems = [...row].sort((a, b) => a.x - b.x);
+    const cells = sortedItems.map(item => item.str.trim()).filter(s => s);
+    const avgY = row.reduce((sum, item) => sum + item.y, 0) / row.length;
+
+    return { cells, y: avgY };
+  });
+}
+
+/**
+ * Build a table from raw rows using user calibration settings
+ */
+export function buildTableFromCalibration(
+  rawRows: RawRow[],
+  settings: CalibrationSettings
+): ParsedTable | null {
+  const { headerRowIndex, labelColumnIndex } = settings;
+
+  if (headerRowIndex >= rawRows.length) return null;
+
+  const headerRow = rawRows[headerRowIndex];
+  const headers: string[] = [];
+
+  // Build headers from the header row, skipping the label column
+  for (let i = 0; i < headerRow.cells.length; i++) {
+    if (i !== labelColumnIndex) {
+      headers.push(headerRow.cells[i] || `Column ${i}`);
+    }
+  }
+
+  if (headers.length === 0) return null;
+
+  const tableRows: TableRow[] = [];
+
+  // Process data rows (after header)
+  for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    const label = row.cells[labelColumnIndex]?.trim();
+
+    // Skip empty labels
+    if (!label || label.length < 2) continue;
+
+    const values: Record<string, string> = {};
+    let headerIdx = 0;
+
+    for (let j = 0; j < row.cells.length; j++) {
+      if (j !== labelColumnIndex && headerIdx < headers.length) {
+        values[headers[headerIdx]] = row.cells[j]?.trim() || "";
+        headerIdx++;
+      }
+    }
+
+    tableRows.push({
+      id: `calibrated-row-${i}`,
+      label,
+      values,
+    });
+  }
+
+  if (tableRows.length === 0) return null;
+
+  return {
+    id: "calibrated-table",
+    headers,
+    rows: tableRows,
+  };
 }

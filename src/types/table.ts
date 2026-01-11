@@ -21,10 +21,23 @@ export interface ParsedTable {
   rows: TableRow[];
 }
 
+// Raw extracted rows for user calibration
+export interface RawRow {
+  cells: string[];
+  y: number; // Average Y position of the row
+}
+
 export interface ParseResult {
   sourceUrl: string;
   tables: ParsedTable[];
+  rawRows?: RawRow[]; // Raw rows for calibration mode
   parsedAt: string;
+}
+
+// User calibration settings
+export interface CalibrationSettings {
+  headerRowIndex: number;
+  labelColumnIndex: number;
 }
 
 export interface ParseError {

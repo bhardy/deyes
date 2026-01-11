@@ -11,12 +11,14 @@ import {
   RowDetails,
   TableSelector,
 } from "@/components/table";
+import { CalibrationView } from "@/components/table/calibration-view";
 import { parsePdfFile } from "@/lib/pdf/client";
-import type { ParseResult, TableRow } from "@/types/table";
+import type { ParseResult, ParsedTable, TableRow, RawRow } from "@/types/table";
 
 type ViewState =
   | "input"
   | "loading"
+  | "calibrate"
   | "select-table"
   | "query"
   | "result"
@@ -32,6 +34,7 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>("input");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [rawRows, setRawRows] = useState<RawRow[]>([]);
   const [selectedTableIndex, setSelectedTableIndex] = useState(0);
   const [selectedRow, setSelectedRow] = useState<TableRow | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
@@ -59,7 +62,16 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
       const result = await parsePdfFile(file);
       setParseResult(result);
 
-      if (result.tables.length > 1) {
+      // Store raw rows for potential calibration
+      if (result.rawRows) {
+        setRawRows(result.rawRows);
+      }
+
+      // If no tables detected or tables seem wrong, go to calibration
+      if (result.tables.length === 0 || (result.rawRows && result.rawRows.length > 0)) {
+        // Always offer calibration for now, since auto-detection is unreliable
+        setView("calibrate");
+      } else if (result.tables.length > 1) {
         setSelectedTableIndex(0);
         setView("select-table");
       } else {
@@ -85,6 +97,7 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
     setError(null);
     setView("input");
     setParseResult(null);
+    setRawRows([]);
     setSelectedTableIndex(0);
     setSelectedRow(null);
     setSelectedColumn(null);
@@ -96,6 +109,20 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
   const handleTableSelect = (index: number) => {
     setSelectedTableIndex(index);
     setView("query");
+  };
+
+  const handleCalibrationComplete = (table: ParsedTable) => {
+    // Replace tables with calibrated table
+    setParseResult(prev => prev ? {
+      ...prev,
+      tables: [table],
+    } : null);
+    setSelectedTableIndex(0);
+    setView("query");
+  };
+
+  const handleCalibrationCancel = () => {
+    handleReset();
   };
 
   const handleQuery = (rowId: string, column: string) => {
@@ -174,6 +201,16 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
 
       case "loading":
         return <LoadingScreen key="loading" />;
+
+      case "calibrate":
+        return rawRows.length > 0 ? (
+          <CalibrationView
+            key="calibrate"
+            rawRows={rawRows}
+            onComplete={handleCalibrationComplete}
+            onCancel={handleCalibrationCancel}
+          />
+        ) : null;
 
       case "select-table":
         return parseResult ? (
