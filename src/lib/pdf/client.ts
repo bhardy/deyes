@@ -88,11 +88,12 @@ export async function parsePdfFile(file: File): Promise<ParseResult> {
     });
   });
 
-  // Return with raw rows for calibration (even if no tables detected)
+  // Return with raw data for calibration (even if no tables detected)
   return {
     sourceUrl: file.name,
     tables,
     rawRows,
+    rawItems: allItems, // Include all text items for position-based lookup
     parsedAt: new Date().toISOString(),
   };
 }

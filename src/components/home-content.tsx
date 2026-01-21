@@ -13,7 +13,7 @@ import {
 } from "@/components/table";
 import { CalibrationView } from "@/components/table/calibration-view";
 import { parsePdfFile } from "@/lib/pdf/client";
-import type { ParseResult, ParsedTable, TableRow, RawRow } from "@/types/table";
+import type { ParseResult, ParsedTable, TableRow, TextItem } from "@/types/table";
 
 type ViewState =
   | "input"
@@ -34,7 +34,7 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>("input");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
-  const [rawRows, setRawRows] = useState<RawRow[]>([]);
+  const [rawItems, setRawItems] = useState<TextItem[]>([]);
   const [selectedTableIndex, setSelectedTableIndex] = useState(0);
   const [selectedRow, setSelectedRow] = useState<TableRow | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
@@ -62,13 +62,13 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
       const result = await parsePdfFile(file);
       setParseResult(result);
 
-      // Store raw rows for potential calibration
-      if (result.rawRows) {
-        setRawRows(result.rawRows);
+      // Store raw items for calibration
+      if (result.rawItems) {
+        setRawItems(result.rawItems);
       }
 
-      // If no tables detected or tables seem wrong, go to calibration
-      if (result.tables.length === 0 || (result.rawRows && result.rawRows.length > 0)) {
+      // If no tables detected or we have raw items, go to calibration
+      if (result.tables.length === 0 || (result.rawItems && result.rawItems.length > 0)) {
         // Always offer calibration for now, since auto-detection is unreliable
         setView("calibrate");
       } else if (result.tables.length > 1) {
@@ -97,7 +97,7 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
     setError(null);
     setView("input");
     setParseResult(null);
-    setRawRows([]);
+    setRawItems([]);
     setSelectedTableIndex(0);
     setSelectedRow(null);
     setSelectedColumn(null);
@@ -203,10 +203,10 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
         return <LoadingScreen key="loading" />;
 
       case "calibrate":
-        return rawRows.length > 0 ? (
+        return rawItems.length > 0 ? (
           <CalibrationView
             key="calibrate"
-            rawRows={rawRows}
+            rawItems={rawItems}
             onComplete={handleCalibrationComplete}
             onCancel={handleCalibrationCancel}
           />

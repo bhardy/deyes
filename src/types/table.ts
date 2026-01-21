@@ -31,6 +31,7 @@ export interface ParseResult {
   sourceUrl: string;
   tables: ParsedTable[];
   rawRows?: RawRow[]; // Raw rows for calibration mode
+  rawItems?: TextItem[]; // All text items with positions for direct lookup
   parsedAt: string;
 }
 
