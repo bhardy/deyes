@@ -18,81 +18,110 @@ const HEADER_KEYWORDS = [
   "serving", "weight", "cholesterol", "vitamin", "calcium", "iron"
 ];
 
-// Find likely column headers (items near the top with nutrition keywords)
-function findLikelyHeaders(items: TextItem[]): TextItem[] {
-  // Get unique strings with their positions
-  const uniqueItems = new Map<string, TextItem>();
+// Section headers to exclude from row items
+const SECTION_KEYWORDS = [
+  "toppings", "appetizers", "wings", "salads", "dressings", "wraps",
+  "pastas", "meat", "chicken", "veggie", "cheese", "desserts", "beverages",
+  "kids", "pizzas", "nutrition facts", "daily value"
+];
+
+interface HeaderItem {
+  text: string;
+  item: TextItem;
+}
+
+interface RowItem {
+  text: string;
+  item: TextItem;
+  section?: string;
+}
+
+// Find likely column headers
+function findHeaders(items: TextItem[]): HeaderItem[] {
+  const uniqueHeaders = new Map<string, TextItem>();
 
   for (const item of items) {
     const text = item.str.trim();
     if (text.length < 2) continue;
 
-    // Keep the item with smallest Y (topmost occurrence)
-    const existing = uniqueItems.get(text);
-    if (!existing || item.y < existing.y) {
-      uniqueItems.set(text, item);
+    const textLower = text.toLowerCase();
+    const isHeader = HEADER_KEYWORDS.some(kw => textLower.includes(kw));
+
+    if (isHeader && !uniqueHeaders.has(text)) {
+      uniqueHeaders.set(text, item);
     }
   }
 
-  // Filter to items that look like headers
-  const headers: TextItem[] = [];
-  for (const item of uniqueItems.values()) {
-    const textLower = item.str.toLowerCase();
-    const isLikelyHeader = HEADER_KEYWORDS.some(kw => textLower.includes(kw));
-    if (isLikelyHeader) {
-      headers.push(item);
-    }
-  }
-
-  // Sort by X position (left to right)
-  return headers.sort((a, b) => a.x - b.x);
+  return Array.from(uniqueHeaders.entries())
+    .map(([text, item]) => ({ text, item }))
+    .sort((a, b) => a.item.x - b.item.x);
 }
 
-// Find likely row labels (items on the left side)
-function findLikelyRowLabels(items: TextItem[], headerY: number): TextItem[] {
-  // Get all items below the header line
-  const belowHeader = items.filter(item => item.y > headerY + 10);
+// Find likely row items (menu items, not section headers)
+function findRowItems(items: TextItem[], headerY: number): RowItem[] {
+  // Get items below the header area
+  const belowHeader = items.filter(item => item.y > headerY + 20);
 
-  // Find the minimum X position (leftmost column)
+  if (belowHeader.length === 0) return [];
+
+  // Find the leftmost X position
   const minX = Math.min(...belowHeader.map(i => i.x));
 
-  // Get items in the leftmost column area
-  const leftColumnItems = belowHeader.filter(item =>
-    item.x < minX + 50 && item.str.trim().length > 2
+  // Get items in the left column
+  const leftItems = belowHeader.filter(item =>
+    item.x < minX + 100 && item.str.trim().length > 2
   );
 
-  // Get unique strings
-  const uniqueLabels = new Map<string, TextItem>();
-  for (const item of leftColumnItems) {
+  // Deduplicate and categorize
+  const seen = new Set<string>();
+  const rowItems: RowItem[] = [];
+  let currentSection = "";
+
+  // Sort by Y position
+  const sorted = [...leftItems].sort((a, b) => a.y - b.y);
+
+  for (const item of sorted) {
     const text = item.str.trim();
-    if (!uniqueLabels.has(text)) {
-      uniqueLabels.set(text, item);
+    if (seen.has(text)) continue;
+    seen.add(text);
+
+    const textLower = text.toLowerCase();
+
+    // Check if this is a section header
+    const isSection = SECTION_KEYWORDS.some(kw =>
+      textLower === kw || textLower.includes(kw)
+    );
+
+    if (isSection && text.length < 30) {
+      currentSection = text;
+    } else if (!isSection) {
+      rowItems.push({
+        text,
+        item,
+        section: currentSection || undefined,
+      });
     }
   }
 
-  // Sort by Y position (top to bottom)
-  return Array.from(uniqueLabels.values()).sort((a, b) => a.y - b.y);
+  return rowItems;
 }
 
-// Find the cell value at the intersection of a header column and row
+// Find cell value at intersection
 function findCellValue(
   items: TextItem[],
   headerItem: TextItem,
-  rowItem: TextItem,
-  tolerance: number = 30
+  rowItem: TextItem
 ): string | null {
-  // Look for items that are:
-  // - Near the header's X position (same column)
-  // - Near the row's Y position (same row)
+  // Look for items near the intersection
   const candidates = items.filter(item => {
-    const xMatch = Math.abs(item.x - headerItem.x) < tolerance;
-    const yMatch = Math.abs(item.y - rowItem.y) < tolerance;
-    return xMatch && yMatch && item.str.trim().length > 0;
+    const xDiff = Math.abs(item.x - headerItem.x);
+    const yDiff = Math.abs(item.y - rowItem.y);
+    return xDiff < 40 && yDiff < 15 && item.str.trim().length > 0;
   });
 
   if (candidates.length === 0) return null;
 
-  // Return the closest match
+  // Sort by distance and return closest
   candidates.sort((a, b) => {
     const distA = Math.abs(a.x - headerItem.x) + Math.abs(a.y - rowItem.y);
     const distB = Math.abs(b.x - headerItem.x) + Math.abs(b.y - rowItem.y);
@@ -102,157 +131,150 @@ function findCellValue(
   return candidates[0].str.trim();
 }
 
-// Build a table from selected header and row items
-function buildTableFromSelection(
+// Get all values for a row
+function getAllRowValues(
   items: TextItem[],
-  selectedHeaders: TextItem[],
-  rowLabels: TextItem[]
-): ParsedTable {
-  const headers = selectedHeaders.map(h => h.str.trim());
-  const rows: TableRow[] = [];
+  headers: HeaderItem[],
+  rowItem: TextItem
+): Record<string, string> {
+  const values: Record<string, string> = {};
 
-  for (let i = 0; i < rowLabels.length; i++) {
-    const rowItem = rowLabels[i];
-    const label = rowItem.str.trim();
-    const values: Record<string, string> = {};
-
-    for (const headerItem of selectedHeaders) {
-      const headerName = headerItem.str.trim();
-      const value = findCellValue(items, headerItem, rowItem);
-      values[headerName] = value || "";
+  for (const header of headers) {
+    const value = findCellValue(items, header.item, rowItem);
+    if (value) {
+      values[header.text] = value;
     }
-
-    rows.push({
-      id: `row-${i}`,
-      label,
-      values,
-    });
   }
 
-  return {
-    id: "calibrated-table",
-    headers,
-    rows,
-  };
+  return values;
 }
 
 export function CalibrationView({ rawItems, onComplete, onCancel }: CalibrationViewProps) {
-  const [step, setStep] = useState<"headers" | "rows" | "confirm">("headers");
-  const [selectedHeaders, setSelectedHeaders] = useState<TextItem[]>([]);
+  const [step, setStep] = useState<"header" | "row" | "result">("header");
+  const [selectedHeader, setSelectedHeader] = useState<HeaderItem | null>(null);
+  const [selectedRow, setSelectedRow] = useState<RowItem | null>(null);
+  const [showAllValues, setShowAllValues] = useState(false);
   const [headerSearch, setHeaderSearch] = useState("");
   const [rowSearch, setRowSearch] = useState("");
 
-  // Find likely headers
-  const likelyHeaders = useMemo(() => findLikelyHeaders(rawItems), [rawItems]);
+  // Find headers
+  const headers = useMemo(() => findHeaders(rawItems), [rawItems]);
 
-  // Find row labels based on selected headers
-  const rowLabels = useMemo(() => {
-    if (selectedHeaders.length === 0) return [];
-    const minHeaderY = Math.min(...selectedHeaders.map(h => h.y));
-    return findLikelyRowLabels(rawItems, minHeaderY);
-  }, [rawItems, selectedHeaders]);
+  // Find row items (based on header position)
+  const rowItems = useMemo(() => {
+    if (headers.length === 0) return [];
+    const minHeaderY = Math.min(...headers.map(h => h.item.y));
+    return findRowItems(rawItems, minHeaderY);
+  }, [rawItems, headers]);
 
   // Filter headers by search
   const filteredHeaders = useMemo(() => {
-    if (!headerSearch) return likelyHeaders;
+    if (!headerSearch) return headers;
     const search = headerSearch.toLowerCase();
-    return likelyHeaders.filter(h => h.str.toLowerCase().includes(search));
-  }, [likelyHeaders, headerSearch]);
+    return headers.filter(h => h.text.toLowerCase().includes(search));
+  }, [headers, headerSearch]);
 
   // Filter rows by search
   const filteredRows = useMemo(() => {
-    if (!rowSearch) return rowLabels.slice(0, 50);
+    if (!rowSearch) return rowItems.slice(0, 100);
     const search = rowSearch.toLowerCase();
-    return rowLabels.filter(r => r.str.toLowerCase().includes(search)).slice(0, 50);
-  }, [rowLabels, rowSearch]);
+    return rowItems.filter(r => r.text.toLowerCase().includes(search)).slice(0, 100);
+  }, [rowItems, rowSearch]);
 
-  const toggleHeader = (header: TextItem) => {
-    setSelectedHeaders(prev => {
-      const exists = prev.find(h => h.str === header.str);
-      if (exists) {
-        return prev.filter(h => h.str !== header.str);
-      }
-      return [...prev, header];
-    });
+  // Get result value
+  const resultValue = useMemo(() => {
+    if (!selectedHeader || !selectedRow) return null;
+    return findCellValue(rawItems, selectedHeader.item, selectedRow.item);
+  }, [rawItems, selectedHeader, selectedRow]);
+
+  // Get all values for the row
+  const allValues = useMemo(() => {
+    if (!selectedRow) return {};
+    return getAllRowValues(rawItems, headers, selectedRow.item);
+  }, [rawItems, headers, selectedRow]);
+
+  const handleHeaderSelect = (header: HeaderItem) => {
+    setSelectedHeader(header);
+    setStep("row");
   };
 
-  const handleConfirm = () => {
-    if (selectedHeaders.length === 0) return;
+  const handleRowSelect = (row: RowItem) => {
+    setSelectedRow(row);
+    setStep("result");
+  };
 
-    const table = buildTableFromSelection(rawItems, selectedHeaders, rowLabels);
-    onComplete(table);
+  const handleBack = () => {
+    if (step === "row") {
+      setStep("header");
+      setSelectedHeader(null);
+    } else if (step === "result") {
+      setStep("row");
+      setSelectedRow(null);
+      setShowAllValues(false);
+    }
+  };
+
+  const handleRestart = () => {
+    setStep("header");
+    setSelectedHeader(null);
+    setSelectedRow(null);
+    setShowAllValues(false);
+    setHeaderSearch("");
+    setRowSearch("");
   };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-2xl mx-auto px-4 max-h-[85dvh] overflow-y-auto"
+      className="w-full max-w-lg mx-auto px-4"
     >
-      <div className="sticky top-0 bg-background py-3 z-10 border-b mb-4">
-        <h2 className="text-xl font-semibold mb-1">
-          {step === "headers" && "Step 1: Select column headers"}
-          {step === "rows" && "Step 2: Review detected items"}
-          {step === "confirm" && "Step 3: Confirm selection"}
-        </h2>
-        <p className="text-gray-500 text-sm">
-          {step === "headers" && "Select the nutritional values you want to query (e.g., Calories, Fat, Sodium)"}
-          {step === "rows" && `Found ${rowLabels.length} menu items. Review and continue.`}
-          {step === "confirm" && "Confirm your selection to start querying"}
-        </p>
-      </div>
-
-      {step === "headers" && (
+      {step === "header" && (
         <>
           <div className="mb-4">
+            <h2 className="text-xl font-semibold mb-1">What do you want to know?</h2>
+            <p className="text-gray-500 text-sm">Select a nutritional value</p>
+          </div>
+
+          <div className="mb-4">
             <Input
-              placeholder="Search headers..."
+              placeholder="Search (e.g., calories, fat, sodium)..."
               value={headerSearch}
               onChange={(e) => setHeaderSearch(e.target.value)}
               className="w-full"
             />
           </div>
 
-          {selectedHeaders.length > 0 && (
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="text-sm text-blue-700 mb-2">Selected ({selectedHeaders.length}):</div>
-              <div className="flex flex-wrap gap-2">
-                {selectedHeaders.map(h => (
-                  <span key={h.str} className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm">
-                    {h.str}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="text-sm text-gray-500 mb-2">
-            Found {likelyHeaders.length} likely column headers:
+          <div className="flex flex-wrap gap-2 mb-6 max-h-[50dvh] overflow-y-auto pb-4">
+            {filteredHeaders.map((header, idx) => (
+              <button
+                key={`${header.text}-${idx}`}
+                onClick={() => handleHeaderSelect(header)}
+                className="px-4 py-2 rounded-lg border border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-colors text-sm"
+              >
+                {header.text}
+              </button>
+            ))}
+            {filteredHeaders.length === 0 && (
+              <p className="text-gray-500 text-sm">No matching headers found</p>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2 mb-6 pb-20">
-            {filteredHeaders.map((header, idx) => {
-              const isSelected = selectedHeaders.some(h => h.str === header.str);
-              return (
-                <button
-                  key={`${header.str}-${idx}`}
-                  onClick={() => toggleHeader(header)}
-                  className={`px-3 py-2 rounded-lg border transition-colors text-sm ${
-                    isSelected
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                  }`}
-                >
-                  {header.str}
-                </button>
-              );
-            })}
-          </div>
+          <Button variant="outline" onClick={onCancel} className="w-full">
+            Cancel
+          </Button>
         </>
       )}
 
-      {step === "rows" && (
+      {step === "row" && (
         <>
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold mb-1">Select an item</h2>
+            <p className="text-gray-500 text-sm">
+              Looking for: <span className="font-medium text-blue-600">{selectedHeader?.text}</span>
+            </p>
+          </div>
+
           <div className="mb-4">
             <Input
               placeholder="Search items..."
@@ -262,88 +284,115 @@ export function CalibrationView({ rawItems, onComplete, onCancel }: CalibrationV
             />
           </div>
 
-          <div className="text-sm text-gray-500 mb-2">
-            Menu items found (showing {filteredRows.length} of {rowLabels.length}):
+          <div className="space-y-1 mb-6 max-h-[50dvh] overflow-y-auto pb-4">
+            {filteredRows.map((row, idx) => (
+              <button
+                key={`${row.text}-${idx}`}
+                onClick={() => handleRowSelect(row)}
+                className="w-full text-left px-4 py-2 rounded-lg border border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-colors text-sm"
+              >
+                {row.section && (
+                  <span className="text-xs text-gray-400 block">{row.section}</span>
+                )}
+                {row.text}
+              </button>
+            ))}
+            {filteredRows.length === 0 && (
+              <p className="text-gray-500 text-sm">No matching items found</p>
+            )}
           </div>
 
-          <div className="space-y-1 mb-6 pb-20">
-            {filteredRows.map((row, idx) => (
-              <div
-                key={`${row.str}-${idx}`}
-                className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
-              >
-                {row.str}
-              </div>
-            ))}
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={handleBack} className="flex-1">
+              Back
+            </Button>
+            <Button variant="outline" onClick={onCancel} className="flex-1">
+              Cancel
+            </Button>
           </div>
         </>
       )}
 
-      {step === "confirm" && (
-        <div className="mb-6 pb-20">
-          <div className="p-4 bg-gray-50 rounded-lg mb-4">
-            <div className="font-medium mb-2">Selected columns:</div>
-            <div className="flex flex-wrap gap-2">
-              {selectedHeaders.map(h => (
-                <span key={h.str} className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm">
-                  {h.str}
-                </span>
-              ))}
-            </div>
-          </div>
+      {step === "result" && (
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">{selectedRow?.text}</h2>
 
-          <div className="p-4 bg-gray-50 rounded-lg">
-            <div className="font-medium mb-2">Menu items: {rowLabels.length}</div>
-            <div className="text-sm text-gray-600">
-              Sample: {rowLabels.slice(0, 5).map(r => r.str).join(", ")}
-              {rowLabels.length > 5 && "..."}
-            </div>
-          </div>
+          {!showAllValues ? (
+            <>
+              <div className="text-lg mb-6">
+                <span className="text-gray-500">{selectedHeader?.text}:</span>{" "}
+                <span className="font-semibold text-2xl">{resultValue || "N/A"}</span>
+              </div>
+
+              <div className="space-y-3">
+                <Button
+                  onClick={() => setShowAllValues(true)}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Show more
+                </Button>
+                <Button
+                  onClick={handleBack}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Go back
+                </Button>
+                <Button
+                  onClick={handleRestart}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Restart
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-left space-y-2 mb-6 max-h-[50dvh] overflow-y-auto">
+                {Object.entries(allValues).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className={`px-4 py-2 rounded-lg ${
+                      key === selectedHeader?.text
+                        ? "bg-blue-50 border border-blue-200"
+                        : "bg-gray-50"
+                    }`}
+                  >
+                    <span className="text-gray-500">{key}:</span>{" "}
+                    <span className="font-medium">{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <Button
+                  onClick={() => setShowAllValues(false)}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Show less
+                </Button>
+                <Button
+                  onClick={handleBack}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Go back
+                </Button>
+                <Button
+                  onClick={handleRestart}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Restart
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
-
-      <div className="flex gap-3 sticky bottom-0 bg-background py-4 border-t">
-        {step !== "headers" && (
-          <Button
-            variant="outline"
-            onClick={() => setStep(step === "confirm" ? "rows" : "headers")}
-            className="flex-1"
-          >
-            Back
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          onClick={onCancel}
-          className="flex-1"
-        >
-          Cancel
-        </Button>
-        {step === "headers" && selectedHeaders.length > 0 && (
-          <Button
-            onClick={() => setStep("rows")}
-            className="flex-1 bg-blue-600 text-white hover:bg-blue-700"
-          >
-            Next ({selectedHeaders.length} selected)
-          </Button>
-        )}
-        {step === "rows" && (
-          <Button
-            onClick={() => setStep("confirm")}
-            className="flex-1 bg-blue-600 text-white hover:bg-blue-700"
-          >
-            Next
-          </Button>
-        )}
-        {step === "confirm" && (
-          <Button
-            onClick={handleConfirm}
-            className="flex-1 bg-green-600 text-white hover:bg-green-700"
-          >
-            Confirm & Query
-          </Button>
-        )}
-      </div>
     </motion.div>
   );
 }
