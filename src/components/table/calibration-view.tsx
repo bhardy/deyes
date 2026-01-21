@@ -59,8 +59,8 @@ function findHeaders(items: TextItem[]): HeaderItem[] {
 
 // Find likely row items (menu items, not section headers)
 function findRowItems(items: TextItem[], headerY: number): RowItem[] {
-  // Get items below the header area
-  const belowHeader = items.filter(item => item.y > headerY + 20);
+  // Get items below the header area (use small offset since rows can be close to headers)
+  const belowHeader = items.filter(item => item.y > headerY + 5);
 
   if (belowHeader.length === 0) return [];
 
@@ -87,14 +87,18 @@ function findRowItems(items: TextItem[], headerY: number): RowItem[] {
 
     const textLower = text.toLowerCase();
 
-    // Check if this is a section header
-    const isSection = SECTION_KEYWORDS.some(kw =>
-      textLower === kw || textLower.includes(kw)
+    // Check if this is a section header (must be short and match keyword patterns)
+    // Long items like "Mozzarella Cheese PPP" should not be treated as sections
+    const isSection = text.length < 25 && SECTION_KEYWORDS.some(kw =>
+      textLower === kw ||
+      textLower.startsWith(kw + " ") ||
+      textLower.endsWith(" " + kw) ||
+      textLower === kw.toUpperCase()
     );
 
-    if (isSection && text.length < 30) {
+    if (isSection) {
       currentSection = text;
-    } else if (!isSection) {
+    } else {
       rowItems.push({
         text,
         item,
