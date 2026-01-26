@@ -1,21 +1,263 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { motion } from "motion/react";
+import { useRef, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
+import {
+  LoadingScreen,
+  QueryForm,
+  ResultDisplay,
+  RowDetails,
+  TableSelector,
+} from "@/components/table";
+import { CalibrationView } from "@/components/table/calibration-view";
+import { parsePdfFile } from "@/lib/pdf/client";
+import type { ParseResult, ParsedTable, TableRow, TextItem } from "@/types/table";
+
+type ViewState =
+  | "input"
+  | "loading"
+  | "calibrate"
+  | "select-table"
+  | "query"
+  | "result"
+  | "details";
 
 interface HomeContentProps {
   initialStarted?: boolean;
 }
 
 export function HomeContent({ initialStarted = false }: HomeContentProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isStarted, setIsStarted] = useState(initialStarted);
+  const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<ViewState>("input");
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [rawItems, setRawItems] = useState<TextItem[]>([]);
+  const [selectedTableIndex, setSelectedTableIndex] = useState(0);
+  const [selectedRow, setSelectedRow] = useState<TableRow | null>(null);
+  const [selectedColumn, setSelectedColumn] = useState<string | null>(null);
 
   const handleStart = () => {
     setIsStarted(true);
     window.history.pushState(null, "", "/start");
-    inputRef.current?.focus();
+  };
+
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.type.includes("pdf")) {
+      setError("Please select a PDF file.");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError("File is too large. Maximum size is 10MB.");
+      return;
+    }
+
+    setError(null);
+    setView("loading");
+
+    try {
+      const result = await parsePdfFile(file);
+      setParseResult(result);
+
+      // Store raw items for calibration
+      if (result.rawItems) {
+        setRawItems(result.rawItems);
+      }
+
+      // If no tables detected or we have raw items, go to calibration
+      if (result.tables.length === 0 || (result.rawItems && result.rawItems.length > 0)) {
+        // Always offer calibration for now, since auto-detection is unreliable
+        setView("calibrate");
+      } else if (result.tables.length > 1) {
+        setSelectedTableIndex(0);
+        setView("select-table");
+      } else {
+        setSelectedTableIndex(0);
+        setView("query");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to parse PDF.");
+      setView("input");
+    }
+  }, []);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleReset = () => {
+    setError(null);
+    setView("input");
+    setParseResult(null);
+    setRawItems([]);
+    setSelectedTableIndex(0);
+    setSelectedRow(null);
+    setSelectedColumn(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleTableSelect = (index: number) => {
+    setSelectedTableIndex(index);
+    setView("query");
+  };
+
+  const handleCalibrationComplete = (table: ParsedTable) => {
+    // Replace tables with calibrated table
+    setParseResult(prev => prev ? {
+      ...prev,
+      tables: [table],
+    } : null);
+    setSelectedTableIndex(0);
+    setView("query");
+  };
+
+  const handleCalibrationCancel = () => {
+    handleReset();
+  };
+
+  const handleQuery = (rowId: string, column: string) => {
+    if (!parseResult) return;
+    const table = parseResult.tables[selectedTableIndex];
+    const row = table.rows.find((r) => r.id === rowId);
+    if (row) {
+      setSelectedRow(row);
+      setSelectedColumn(column);
+      setView("result");
+    }
+  };
+
+  const handleNewQuery = () => {
+    setSelectedRow(null);
+    setSelectedColumn(null);
+    setView("query");
+  };
+
+  const currentTable = parseResult?.tables[selectedTableIndex];
+
+  const renderContent = () => {
+    switch (view) {
+      case "input":
+        return (
+          <motion.div
+            key="input"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="w-full max-w-md px-4"
+          >
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={handleFileInput}
+              className="hidden"
+            />
+
+            <div className="relative">
+              {/* Upload button underneath */}
+              <Button
+                onClick={handleUploadClick}
+                className="w-full h-14 rounded-lg text-lg"
+                size="lg"
+              >
+                Upload PDF
+              </Button>
+
+              {/* Start button on top - fades out */}
+              <motion.button
+                onClick={handleStart}
+                className="absolute inset-0 h-14 rounded-lg bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90"
+                initial={{ opacity: 1 }}
+                animate={{ opacity: isStarted ? 0 : 1 }}
+                transition={{ duration: 0.2 }}
+                style={{ pointerEvents: isStarted ? "none" : "auto" }}
+              >
+                Start
+              </motion.button>
+            </div>
+
+            {error && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-4 text-center text-sm text-destructive"
+              >
+                {error}
+              </motion.p>
+            )}
+          </motion.div>
+        );
+
+      case "loading":
+        return <LoadingScreen key="loading" />;
+
+      case "calibrate":
+        return rawItems.length > 0 ? (
+          <CalibrationView
+            key="calibrate"
+            rawItems={rawItems}
+            onComplete={handleCalibrationComplete}
+            onCancel={handleCalibrationCancel}
+          />
+        ) : null;
+
+      case "select-table":
+        return parseResult ? (
+          <TableSelector
+            key="select-table"
+            tables={parseResult.tables}
+            onSelect={handleTableSelect}
+            onBack={handleReset}
+          />
+        ) : null;
+
+      case "query":
+        return currentTable ? (
+          <QueryForm
+            key="query"
+            table={currentTable}
+            onQuery={handleQuery}
+            onBack={handleReset}
+          />
+        ) : null;
+
+      case "result":
+        return selectedRow && selectedColumn ? (
+          <ResultDisplay
+            key="result"
+            row={selectedRow}
+            column={selectedColumn}
+            onViewDetails={() => setView("details")}
+            onNewQuery={handleNewQuery}
+          />
+        ) : null;
+
+      case "details":
+        return selectedRow && currentTable ? (
+          <RowDetails
+            key="details"
+            row={selectedRow}
+            headers={currentTable.headers}
+            highlightColumn={selectedColumn || undefined}
+            onBack={() => setView("result")}
+            onNewQuery={handleNewQuery}
+          />
+        ) : null;
+
+      default:
+        return null;
+    }
   };
 
   return (
@@ -24,34 +266,18 @@ export function HomeContent({ initialStarted = false }: HomeContentProps) {
         <ThemeToggle />
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-center">
-        <h1 className="text-6xl font-bold text-foreground mb-8">
-          deyes
-        </h1>
+      <main className="flex-1 flex flex-col items-center justify-center overflow-y-auto">
+        {view === "input" && (
+          <motion.h1
+            className="text-6xl font-bold text-foreground mb-8"
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
+          >
+            deyes
+          </motion.h1>
+        )}
 
-        <div className="w-full max-w-md px-4">
-          <div className="relative">
-            {/* Input underneath */}
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Type something..."
-              className="w-full h-14 rounded-lg border-2 border-primary bg-background px-6 text-lg placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-
-            {/* Button on top */}
-            <motion.button
-              onClick={handleStart}
-              className="absolute inset-0 h-14 rounded-lg bg-primary text-primary-foreground text-lg font-medium shadow hover:bg-primary/90"
-              initial={{ opacity: 1 }}
-              animate={{ opacity: isStarted ? 0 : 1 }}
-              transition={{ duration: 0.2 }}
-              style={{ pointerEvents: isStarted ? "none" : "auto" }}
-            >
-              Start
-            </motion.button>
-          </div>
-        </div>
+        <AnimatePresence mode="wait">{renderContent()}</AnimatePresence>
       </main>
     </div>
   );
